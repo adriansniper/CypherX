@@ -1,6 +1,13 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const Anthropic = require('@anthropic-ai/sdk');
+const { handleJokeCommand } = require('./handlers/jokeHandler');
+const { handleCommand, sendHelpMenu, sendBotStatus } = require('./handlers/commandRouter');
+const { handleAICommand } = require('./handlers/aiCommands');
+const { handleFunCommand } = require('./handlers/funCommands');
+const { handleToolCommand } = require('./handlers/toolCommands');
+const { handleSearchCommand } = require('./handlers/searchCommands');
+const { handleGroupCommand } = require('./handlers/groupCommands');
 require('dotenv').config();
 
 // Initialize WhatsApp client
@@ -17,6 +24,10 @@ const anthropic = new Anthropic({
   apiKey: process.env.CLAUDE_API_KEY
 });
 
+// Bot configuration
+const BOT_PREFIX = process.env.BOT_PREFIX || '.';
+const OWNER_NUMBER = '+254759169078';
+
 // Store conversation history per chat
 const conversationHistory = new Map();
 
@@ -29,6 +40,8 @@ client.on('qr', qr => {
 // Bot ready
 client.on('ready', () => {
   console.log('✅ CypherX bot is ready!');
+  console.log(`🔧 Prefix: ${BOT_PREFIX}`);
+  console.log(`📞 Owner: ${OWNER_NUMBER}`);
 });
 
 // Message handler
@@ -37,51 +50,54 @@ client.on('message_create', async msg => {
     // Don't respond to own messages
     if (msg.fromMe) return;
 
-    const chatId = msg.from;
-    const userMessage = msg.body.trim();
+    const messageBody = msg.body.trim();
+    const prefix = BOT_PREFIX;
 
-    // Initialize conversation history if new chat
-    if (!conversationHistory.has(chatId)) {
-      conversationHistory.set(chatId, []);
-    }
+    // Check if message starts with prefix
+    if (!messageBody.startsWith(prefix)) return;
 
-    // Add user message to history
-    const history = conversationHistory.get(chatId);
-    history.push({
-      role: 'user',
-      content: userMessage
-    });
+    const command = messageBody.slice(prefix.length).trim().split(' ')[0].toLowerCase();
 
-    // Keep conversation history limited (last 10 messages)
-    if (history.length > 10) {
-      history.shift();
-    }
+    console.log(`📨 Command from ${msg.author || msg.from}: ${command}`);
 
     // Show typing indicator
-    await client.sendPresenceAvailable();
     await msg.getChat().then(chat => chat.sendSeen());
 
-    // Get response from Claude
-    console.log(`📨 Message from ${msg.author || msg.from}: ${userMessage}`);
+    let handled = false;
 
-    const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 1024,
-      system: 'You are CypherX, a helpful WhatsApp assistant. Respond concisely and naturally. Keep responses under 160 characters when possible to fit WhatsApp formatting.',
-      messages: history
-    });
+    // Route to appropriate handler
+    if (command === 'joke' || command === 'jokes' || command === 'types') {
+      handled = await handleJokeCommand(msg, messageBody);
+    } else if (command === 'gpt' || command === 'ai' || command === 'chat' || command === 'analyze' || command === 'translate' || command === 'summarize' || command === 'code') {
+      handled = await handleAICommand(msg, prefix);
+    } else if (command === 'fact' || command === 'quote' || command === 'trivia' || command === 'meme') {
+      handled = await handleFunCommand(msg, prefix);
+    } else if (command === 'qr' || command === 'password' || command === 'genpass' || command === 'weather' || command === 'calc' || command === 'calculate' || command === 'base64') {
+      handled = await handleToolCommand(msg, prefix);
+    } else if (command === 'define' || command === 'definition' || command === 'lyrics') {
+      handled = await handleSearchCommand(msg, prefix);
+    } else if (command === 'members' || command === 'totalmembers' || command === 'groupid' || command === 'link') {
+      handled = await handleGroupCommand(msg, prefix);
+    } else if (command === 'help' || command === 'menu') {
+      handled = await sendHelpMenu(msg);
+    } else if (command === 'status') {
+      handled = await sendBotStatus(msg);
+    } else if (command === 'ping') {
+      const startTime = Date.now();
+      const pongMsg = await msg.reply('🏓 Pong!');
+      const endTime = Date.now();
+      const latency = endTime - startTime;
+      await pongMsg.edit(`🏓 Pong! (${latency}ms)`);
+      handled = true;
+    } else if (command === 'echo') {
+      const echoText = messageBody.slice(prefix.length + 4).trim();
+      await msg.reply(echoText || 'Please provide text to echo');
+      handled = true;
+    }
 
-    const botReply = response.content[0].text;
-
-    // Add bot response to history
-    history.push({
-      role: 'assistant',
-      content: botReply
-    });
-
-    // Send response
-    await msg.reply(botReply);
-    console.log(`✅ Reply sent: ${botReply}\n`);
+    if (!handled) {
+      await msg.reply(`❌ Unknown command: ${command}\nSend ${prefix}help for available commands`);
+    }
 
   } catch (error) {
     console.error('❌ Error processing message:', error);
